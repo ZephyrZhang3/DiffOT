@@ -1,0 +1,25 @@
+# python generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# rye generated files
+.venv
+.ruff_cache
+
+
+# 
+pics/*
+poster/*
+stats/*.json
+discrete_transport_mappings/
+our_checkpoints/
+
+**/logs*/
+**/wandb/
+**/checkpoints/
+**/.ipynb_checkpoints/
+

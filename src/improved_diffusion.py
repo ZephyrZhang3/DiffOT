@@ -1,7 +1,8 @@
-# from https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/unet.py 
+# from https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/unet.py
 # and https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/fp16_util.py
 
-import os, sys
+import sys
+
 sys.path.append("..")
 
 from abc import abstractmethod
@@ -343,7 +344,7 @@ class QKVAttention(nn.Module):
         # We perform two matmuls with the same number of ops.
         # The first computes the weight matrix, the second computes
         # the combination of the value vectors.
-        matmul_ops = 2 * b * (num_spatial ** 2) * c
+        matmul_ops = 2 * b * (num_spatial**2) * c
         model.total_ops += th.DoubleTensor([matmul_ops])
 
 

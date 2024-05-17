@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import functools
-    
+
+
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
 
@@ -16,7 +16,7 @@ class DoubleConv(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1),
             nn.GroupNorm(1, out_channels),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
         )
 
     def forward(self, x):
@@ -29,13 +29,11 @@ class Down(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
+            nn.MaxPool2d(2), DoubleConv(in_channels, out_channels)
         )
 
     def forward(self, x):
         return self.maxpool_conv(x)
-    
 
 
 class Up(nn.Module):
@@ -46,12 +44,13 @@ class Up(nn.Module):
 
         # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
             self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
         else:
-            self.up = nn.ConvTranspose2d(in_channels , in_channels // 2, kernel_size=2, stride=2)
+            self.up = nn.ConvTranspose2d(
+                in_channels, in_channels // 2, kernel_size=2, stride=2
+            )
             self.conv = DoubleConv(in_channels, out_channels)
-
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
@@ -59,13 +58,13 @@ class Up(nn.Module):
         diffY = torch.tensor([x2.size()[2] - x1.size()[2]])
         diffX = torch.tensor([x2.size()[3] - x1.size()[3]])
 
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2])
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
         # if you have padding issues, see
         # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
         # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
         x = torch.cat([x2, x1], dim=1)
         return self.conv(x)
+
 
 # Conditional Unet defined below
 class CondINorm(nn.Module):
@@ -74,25 +73,26 @@ class CondINorm(nn.Module):
         self.eps = eps
         self.shift_conv = nn.Sequential(
             nn.Conv2d(z_channels, in_channels, kernel_size=1, padding=0, bias=True),
-            nn.ReLU(True)
+            nn.ReLU(True),
         )
         self.scale_conv = nn.Sequential(
             nn.Conv2d(z_channels, in_channels, kernel_size=1, padding=0, bias=True),
-            nn.ReLU(True)
+            nn.ReLU(True),
         )
 
     def forward(self, x, z):
         shift = self.shift_conv.forward(z)
         scale = self.scale_conv.forward(z)
         size = x.size()
-        x_reshaped = x.view(size[0], size[1], size[2]*size[3])
+        x_reshaped = x.view(size[0], size[1], size[2] * size[3])
         mean = x_reshaped.mean(2, keepdim=True)
         var = x_reshaped.var(2, keepdim=True)
-        std =  torch.rsqrt(var + self.eps)
+        std = torch.rsqrt(var + self.eps)
         norm_features = ((x_reshaped - mean) * std).view(*size)
         output = norm_features * scale + shift
         return output
-    
+
+
 class CondDoubleConv(nn.Module):
     """(convolution => [CIN] => ReLU) * 2"""
 
@@ -116,13 +116,16 @@ class CondDoubleConv(nn.Module):
         x = self.relu2(x)
         return x
 
+
 class CondUp(nn.Module):
     """Upscaling then double conv"""
 
     def __init__(self, in_channels, out_channels, z_channels):
         super().__init__()
-        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.conv = CondDoubleConv(in_channels, out_channels, z_channels, in_channels // 2)
+        self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+        self.conv = CondDoubleConv(
+            in_channels, out_channels, z_channels, in_channels // 2
+        )
 
     def forward(self, x1, x2, z):
         x1 = self.up(x1)
@@ -130,8 +133,7 @@ class CondUp(nn.Module):
         diffY = torch.tensor([x2.size()[2] - x1.size()[2]])
         diffX = torch.tensor([x2.size()[3] - x1.size()[3]])
 
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2])
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
         x = torch.cat([x2, x1], dim=1)
         return self.conv(x, z)
 
@@ -143,7 +145,8 @@ class OutConv(nn.Module):
 
     def forward(self, x):
         return self.conv(x)
-    
+
+
 class CUNet(nn.Module):
     def __init__(self, n_channels, n_classes, z_channels, base_factor=32):
         super(CUNet, self).__init__()
