@@ -28,9 +28,14 @@ build-backend = "hatchling.build"
 [tool.rye]
 managed = true
 dev-dependencies = [
+    "requests @ git+https://github.com/psf/requests.git",
     "jupyterlab>=4.2.0",
-    "notebook>=7.2.0",
-    "ipywidgets>=8.1.2",
+    "jupyterlab-git>=0.50.1",
+    "jupyterlab-lsp>=5.1.0",
+    "jupyterlab-execute-time>=3.1.2",
+    "jupyterlab-code-formatter>=2.2.1",
+    "black>=24.4.2",
+    "isort>=5.13.2",
 ]
 
 [tool.hatch.metadata]

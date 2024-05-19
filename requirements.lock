@@ -7,7 +7,6 @@
 #   all-features: false
 #   with-sources: false
 
---trusted-host pypi.ngc.nvidia.com
 -e file:.
 aiohttp==3.9.5
     # via fsspec
@@ -122,7 +121,7 @@ pyyaml==6.0.1
     # via pytorch-lightning
 regex==2024.5.15
     # via diffusers
-requests==2.31.0
+requests==2.28.1
     # via diffusers
     # via huggingface-hub
 safetensors==0.4.3
@@ -133,6 +132,8 @@ scipy==1.13.0
     # via diffot
     # via pot
     # via scikit-learn
+setuptools==69.5.1
+    # via lightning-utilities
 six==1.16.0
     # via python-dateutil
 sympy==1.12
@@ -171,5 +172,3 @@ yarl==1.9.4
     # via aiohttp
 zipp==3.18.2
     # via importlib-metadata
-setuptools==69.5.1
-    # via lightning-utilities
