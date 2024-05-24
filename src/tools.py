@@ -1,25 +1,20 @@
-import pandas as pd
+import gc
+
+import h5py
 import numpy as np
-
-
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-
-from PIL import Image
-from .inception import InceptionV3
-from tqdm import tqdm_notebook as tqdm
-from .distributions import LoaderSampler
-import torchvision.datasets as datasets
 import torchvision
-import h5py
-from torch.utils.data import TensorDataset
-
-import gc
-
-from torch.utils.data import Subset, DataLoader, Dataset
+import torchvision.datasets as datasets
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset
 from torchvision.datasets import ImageFolder
+from tqdm import tqdm_notebook as tqdm
+
+from .distributions import LoaderSampler
+from .inception import InceptionV3
 
 
 def get_random_colored_images(images, seed=0x000000):
@@ -453,6 +448,60 @@ def get_sde_pushed_loader_stats(
                         .add(1)
                         .mul(0.5)
                     )
+
+                    assert batch.shape[1] in [1, 3]
+                    if batch.shape[1] == 1:
+                        batch = batch.repeat(1, 3, 1, 1)
+                    pred_arr.append(
+                        model(batch)[0].cpu().data.numpy().reshape(end - start, -1)
+                    )
+
+    pred_arr = np.vstack(pred_arr)
+    mu, sigma = np.mean(pred_arr, axis=0), np.cov(pred_arr, rowvar=False)
+    gc.collect()
+    torch.cuda.empty_cache()
+    return mu, sigma
+
+
+def linked_mapping(SDEs, x):
+    for sde in SDEs:
+        freeze(sde)
+
+    mapped = x
+    for sde in SDEs:
+        trajectory, times, shifts = sde(mapped)
+        mapped = trajectory[:, -1]
+    return mapped
+
+
+def get_linked_sdes_pushed_loader_stats(
+    SDEs,
+    loader,
+    batch_size=8,
+    n_epochs=1,
+    verbose=False,
+    device="cuda",
+    use_downloaded_weights=False,
+):
+    dims = 2048
+    block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
+    model = InceptionV3([block_idx], use_downloaded_weights=use_downloaded_weights).to(
+        device
+    )
+    freeze(model)
+
+    size = len(loader.dataset)
+    pred_arr = []
+
+    for epoch in range(n_epochs):
+        with torch.no_grad():
+            for step, (X, _) in (
+                enumerate(loader) if not verbose else tqdm(enumerate(loader))
+            ):
+                for i in range(0, len(X), batch_size):
+                    start, end = i, min(i + batch_size, len(X))
+                    x = X[start:end].type(torch.FloatTensor).to(device)
+                    batch = linked_mapping(SDEs, x).add(1).mul(0.5)
 
                     assert batch.shape[1] in [1, 3]
                     if batch.shape[1] == 1:
