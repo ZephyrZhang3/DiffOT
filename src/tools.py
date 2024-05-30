@@ -11,7 +11,7 @@ import torchvision.datasets as datasets
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset
 from torchvision.datasets import ImageFolder
-from tqdm import tqdm_notebook as tqdm
+from tqdm import tqdm
 
 from .distributions import LoaderSampler
 from .inception import InceptionV3

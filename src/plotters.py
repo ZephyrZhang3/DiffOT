@@ -9,8 +9,6 @@ def plot_fixed_sde_images(X, Y, T, n_samples=4, gray=False):
     freeze(T)
     with torch.no_grad():
         T_X = torch.stack([T(X)[0][:, -1] for i in range(n_samples)], dim=0)
-        print(f"{T_X.shape = }")
-        exit(-1)
         c, h, w = X.shape[1:]
         imgs = (
             torch.cat([X[None, :], T_X, Y[None, :]])
