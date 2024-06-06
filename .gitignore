@@ -22,4 +22,4 @@ our_checkpoints/
 **/wandb/
 **/checkpoints/
 **/.ipynb_checkpoints/
-
+**/__pycache__/
