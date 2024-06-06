@@ -33,7 +33,7 @@ def plot_fixed_sde_images(X, Y, T, n_samples=4, gray=False):
 
     axes[0, 0].set_ylabel("X", fontsize=24)
     for i in range(n_samples):
-        axes[i + 1, 0].set_ylabel("T(X)", fontsize=24)
+        axes[i + 1, 0].set_ylabel(r"$T_{i}(X)$", fontsize=24)
     axes[-1, 0].set_ylabel("Y", fontsize=24)
 
     fig.tight_layout(pad=0.001)

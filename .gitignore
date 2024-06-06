@@ -19,6 +19,7 @@ poster/*
 stats/*.json
 discrete_transport_mappings/
 our_checkpoints/
+saved_models/
 
 **/logs*/
 **/wandb/

@@ -13,7 +13,9 @@ from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset
 from torchvision.datasets import ImageFolder
 from tqdm import tqdm
 
-from .distributions import LoaderSampler
+from .fid_score import calculate_frechet_distance
+
+from .distributions import DatasetSampler, LoaderSampler
 from .inception import InceptionV3
 
 
@@ -282,41 +284,33 @@ def fig2img(fig):
     w, h, d = buf.shape
     return Image.frombytes("RGBA", (w, h), buf.tostring())
 
+def get_loader_stats(Z_sampler, size, batch_size=8, inception=False, resize_to_64=False, verbose=False):
+    if inception:
+        dims = 2048
+        block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
+        model = InceptionV3([block_idx]).cuda()
+        freeze(model)
+    else:
+        dims = np.prod(Z_sampler.sample(1)[0].shape)
+    
+    pred_arr = np.empty((size, dims))
+   
+    with torch.no_grad():
+        for i in tqdm(range(0, size, batch_size)) if verbose else range(0, size, batch_size):
+            start, end = i, min(i + batch_size, size)
 
-def get_loader_stats(loader, batch_size=8, n_epochs=1, verbose=False, use_Y=False):
-    dims = 2048
-    block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
-    model = InceptionV3([block_idx]).cuda()
-    freeze(model)
+            batch = ((Z_sampler.sample(end-start) + 1) / 2).type(torch.FloatTensor).cuda()
+            assert batch.shape[1] in [1, 3]
+            if batch.shape[1] == 1:
+                batch = batch.repeat(1, 3, 1, 1)
+            if inception:
+                pred = model(batch)[0]
+            else:
+                pred = batch
+            pred_arr[start:end] = pred.cpu().data.numpy().reshape(pred.size(0), -1)
 
-    size = len(loader.dataset)
-    pred_arr = []
-
-    for epoch in range(n_epochs):
-        with torch.no_grad():
-            for step, (X, Y) in (
-                enumerate(loader) if not verbose else tqdm(enumerate(loader))
-            ):
-                for i in range(0, len(X), batch_size):
-                    start, end = i, min(i + batch_size, len(X))
-
-                    if not use_Y:
-                        batch = ((X[start:end] + 1) / 2).type(torch.FloatTensor).cuda()
-                    else:
-                        batch = ((Y[start:end] + 1) / 2).type(torch.FloatTensor).cuda()
-
-                    assert batch.shape[1] in [1, 3]
-                    if batch.shape[1] == 1:
-                        batch = batch.repeat(1, 3, 1, 1)
-
-                    pred_arr.append(
-                        model(batch)[0].cpu().data.numpy().reshape(end - start, -1)
-                    )
-
-    pred_arr = np.vstack(pred_arr)
     mu, sigma = np.mean(pred_arr, axis=0), np.cov(pred_arr, rowvar=False)
-    gc.collect()
-    torch.cuda.empty_cache()
+    gc.collect(); torch.cuda.empty_cache()
     return mu, sigma
 
 
@@ -463,15 +457,21 @@ def get_sde_pushed_loader_stats(
     return mu, sigma
 
 
-def linked_mapping(SDEs, x):
+def linked_mapping(SDEs, x, return_trajectory=False):
     for sde in SDEs:
         freeze(sde)
 
-    mapped = x
+    tr = []
+    y = x
     for sde in SDEs:
-        trajectory, times, shifts = sde(mapped)
-        mapped = trajectory[:, -1]
-    return mapped
+        trajectory, times, shifts = sde(y)
+        y = trajectory[:, -1]
+        if return_trajectory:
+            tr.append(y.clone().detach())
+    if return_trajectory:
+        return tr
+    
+    return y
 
 
 def get_linked_sdes_pushed_loader_stats(
@@ -515,3 +515,79 @@ def get_linked_sdes_pushed_loader_stats(
     gc.collect()
     torch.cuda.empty_cache()
     return mu, sigma
+
+def test_accuracy(model, testloader):
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for data in testloader:
+            x, y = data
+            outputs = model(x.cuda())
+            _, predicted = torch.max(outputs.data, 1)
+            total += y.size(0)
+            correct += (predicted == y.cuda()).sum().item()
+    accuracy = 100 * correct / total
+    print('Accuracy of the network:', accuracy)
+    return accuracy
+
+def compute_transport_accuracy(SDEs, labeled_X_sampler, classifier):
+    transport_results = []
+    real_labels = []
+    flat_transport_results =[]
+    flat_real_labels = []
+    for X, labels in labeled_X_sampler:
+        real_labels.append(labels)
+        
+        with torch.no_grad():
+            T_X = linked_mapping(SDEs, X.cuda())
+            transport_results.append(T_X)
+
+    for sublist, ys in zip(transport_results, real_labels):
+        for item, y in zip(sublist, ys):
+            flat_transport_results.append(item.data.cpu().numpy())
+            flat_real_labels.append(y)
+
+    flat_transport_results = torch.Tensor(flat_transport_results)
+    flat_real_labels = torch.LongTensor(flat_real_labels)
+    transport_dataset = torch.utils.data.TensorDataset(flat_transport_results, flat_real_labels)
+    transport_loader = torch.utils.data.DataLoader(transport_dataset, batch_size=100, shuffle=False,
+            num_workers=40, pin_memory=True)
+    accuracy = test_accuracy(classifier, transport_loader)
+    return accuracy
+
+def compute_transport_accuracy_and_FID(SDEs, labeled_X_sampler, classifier, m_data, s_data):
+    transport_results = []
+    real_labels = []
+    flat_transport_results =[]
+    flat_real_labels = []
+
+    print("Mapping X dataset")
+    for X, labels in labeled_X_sampler:
+        real_labels.append(labels)
+        
+        with torch.no_grad():
+            T_X = linked_mapping(SDEs, X.cuda())
+            transport_results.append(T_X)
+
+    for sublist, ys in zip(transport_results, real_labels):
+        for item, y in zip(sublist, ys):
+            flat_transport_results.append(item.data.cpu().numpy())
+            flat_real_labels.append(y)
+
+    flat_transport_results = torch.Tensor(flat_transport_results)
+    flat_real_labels = torch.LongTensor(flat_real_labels)
+    transport_dataset = torch.utils.data.TensorDataset(flat_transport_results, flat_real_labels)
+    transport_loader = torch.utils.data.DataLoader(transport_dataset, batch_size=100, shuffle=False,
+            num_workers=40, pin_memory=True)
+    
+    print("Calculating accuracy")
+    accuracy = test_accuracy(classifier, transport_loader)
+
+    print("Calculating mapped dataset mu and sigma")
+    transport_loader = DatasetSampler(transport_dataset)
+    mu, sigma = get_loader_stats(transport_loader,
+                                  10000, 100, inception=True, verbose=True)
+    print("Calculating FID")
+    fid = calculate_frechet_distance(mu, sigma, m_data, s_data)
+
+    return accuracy, fid

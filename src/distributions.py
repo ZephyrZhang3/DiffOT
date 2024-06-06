@@ -35,78 +35,88 @@ class LoaderSampler(Sampler):
 
         return batch[:size].to(self.device)
 
+class PairedLoaderSampler(Sampler):
+    def __init__(self, loader, device='cuda'):
+        super(PairedLoaderSampler, self).__init__(device)
+        self.loader = loader
+        self.it = iter(self.loader)
+        
+    def sample(self, size=5):
+        assert size <= self.loader.batch_size
+        try:
+            batch_X, batch_Y = next(self.it)
+        except StopIteration:
+            self.it = iter(self.loader)
+            return self.sample(size)
+        if len(batch_X) < size:
+            return self.sample(size)
+            
+        return batch_X[:size].to(self.device), batch_Y[:size].to(self.device)
 
-class SwissRollSampler(Sampler):
-    def __init__(self, dim=2, noise=0.5, device="cuda"):
-        super(SwissRollSampler, self).__init__(device=device)
-        assert dim == 2 or dim == 3
-        self.dim = dim
-        self.noise = noise
-        self.colors = None
 
-    def sample(self, batch_size=10):
-        data, colors = datasets.make_swiss_roll(n_samples=batch_size, noise=self.noise)
-        data = data.astype("float32") / 7.5
-        self.colors = colors
-        if self.dim == 3:
-            batch = data[:, [0, 1, 2]]
-        elif self.dim == 2:
-            batch = data[:, [0, 2]]
-        return torch.tensor(batch, device=self.device)
+class DatasetSampler(Sampler):
+    def __init__(self, dataset, num_workers=40, device='cuda'):
+        super(DatasetSampler, self).__init__(device=device)
+        
+#         self.shape = dataset[0][0].shape
+#         self.dim = np.prod(self.shape)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=num_workers, num_workers=num_workers)
+        
+        with torch.no_grad():
+            self.dataset = torch.cat(
+                [X for (X, y) in loader]
+            )
+        
+    def sample(self, batch_size=16):
+        ind = random.choices(range(len(self.dataset)), k=batch_size)
+        with torch.no_grad():
+            batch = self.dataset[ind].clone().to(self.device).float()
+        return batch
+    
 
+class DatasetSamplerLabeled(Sampler):
+    def __init__(self, dataset, num_workers=40, device='cuda'):
+        super(DatasetSamplerLabeled, self).__init__(device=device)
+        
+#         self.shape = dataset[0][0].shape
+#         self.dim = np.prod(self.shape)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=num_workers, num_workers=num_workers)
+        
+        with torch.no_grad():
+            self.dataset = torch.cat(
+                [X for (X, y) in loader]
+            )
+            self.labels = torch.cat(
+                [y for (X, y) in loader]
+            )
+        
+    def sample(self, batch_size=16):
+        ind = random.choices(range(len(self.dataset)), k=batch_size)
+        with torch.no_grad():
+            batch_x = self.dataset[ind].clone().to(self.device).float()
+            batch_y = self.labels[ind].clone().to(self.device)#.float()
+        return batch_x, batch_y
 
-class MobiusStripSampler(Sampler):
-    def __init__(self, dim=3, noise=0.1, device="cuda"):
-        super(MobiusStripSampler, self).__init__(device=device)
-        assert dim == 3
-        self.dim = dim
-        self.noise = noise
-        self.colors = None
-
-    def sample(self, batch_size=1000):
-        self.colors = [(i / batch_size) for i in range(batch_size)]
-        uv_size = ceil(sqrt(batch_size))
-        # u 的范围从 0 到 2π
-        u = np.linspace(0, 2 * np.pi, uv_size)
-        # v 的范围从 0 到 1
-        v = np.linspace(-1, 1, uv_size)
-        u, v = np.meshgrid(u, v)
-
-        # 计算 x, y, z 坐标
-        x, y, z = self._mobius(u, v, batch_size)
-        # 将数据重塑为 batch_size 行，3列
-        data = np.vstack((x, y, z)).T
-
-        return torch.tensor(data, dtype=torch.float, device=self.device)
-
-    def _mobius(self, u, v, batch_size):
-        x = (1 + 0.5 * v * np.cos(u / 2)) * np.cos(u)
-        y = (1 + 0.5 * v * np.cos(u / 2)) * np.sin(u)
-        z = 0.5 * v * np.sin(u / 2)
-        x, y, z = (
-            x.flatten()[:batch_size],
-            y.flatten()[:batch_size],
-            z.flatten()[:batch_size],
+class CubeUniformSampler(Sampler):
+    def __init__(
+        self, dim=1, centered=False, normalized=False, device='cuda'
+    ):
+        super(CubeUniformSampler, self).__init__(
+            device=device,
         )
-        x += self.noise * (np.random.rand(*x.shape) - 0.5)
-        y += self.noise * (np.random.rand(*y.shape) - 0.5)
-        z += self.noise * (np.random.rand(*z.shape) - 0.5)
-        return x, y, z
-
-
-class MoonsSampler(Sampler):
-    def __init__(self, dim=2, noise=0.1, device="cuda"):
-        super(MoonsSampler, self).__init__(device=device)
-        self.noise = noise
         self.dim = dim
-        self.colors = None
-
-    def sample(self, batch_size=1000):
-        data, colors = datasets.make_moons(n_samples=batch_size, noise=self.noise)
-        data = data / 2.0  # 数据归一化以适应可视化范围
-        self.colors = colors
-        return torch.tensor(data, dtype=torch.float32, device=self.device)
-
+        self.centered = centered
+        self.normalized = normalized
+        self.var = self.dim if self.normalized else (self.dim / 12)
+        self.cov = np.eye(self.dim, dtype=np.float32) if self.normalized else np.eye(self.dim, dtype=np.float32) / 12
+        self.mean = np.zeros(self.dim, dtype=np.float32) if self.centered else .5 * np.ones(self.dim, dtype=np.float32)
+        
+        self.bias = torch.tensor(self.mean, device=self.device)
+        
+    def sample(self, batch_size=10):
+        return np.sqrt(self.var) * (torch.rand(
+            batch_size, self.dim, device=self.device
+        ) - .5) / np.sqrt(self.dim / 12)  + self.bias
 
 class StandardNormalSampler(Sampler):
     def __init__(self, dim=1, device="cuda"):
@@ -223,6 +233,77 @@ class StandartNormalSampler(Sampler):
             device=self.device,
             requires_grad=self.requires_grad,
         )
+
+class SwissRollSampler(Sampler):
+    def __init__(self, dim=2, noise=0.5, device="cuda"):
+        super(SwissRollSampler, self).__init__(device=device)
+        assert dim == 2 or dim == 3
+        self.dim = dim
+        self.noise = noise
+        self.colors = None
+
+    def sample(self, batch_size=10):
+        data, colors = datasets.make_swiss_roll(n_samples=batch_size, noise=self.noise)
+        data = data.astype("float32") / 7.5
+        self.colors = colors
+        if self.dim == 3:
+            batch = data[:, [0, 1, 2]]
+        elif self.dim == 2:
+            batch = data[:, [0, 2]]
+        return torch.tensor(batch, device=self.device)
+
+
+class MobiusStripSampler(Sampler):
+    def __init__(self, dim=3, noise=0.1, device="cuda"):
+        super(MobiusStripSampler, self).__init__(device=device)
+        assert dim == 3
+        self.dim = dim
+        self.noise = noise
+        self.colors = None
+
+    def sample(self, batch_size=1000):
+        self.colors = [(i / batch_size) for i in range(batch_size)]
+        uv_size = ceil(sqrt(batch_size))
+        # u 的范围从 0 到 2π
+        u = np.linspace(0, 2 * np.pi, uv_size)
+        # v 的范围从 0 到 1
+        v = np.linspace(-1, 1, uv_size)
+        u, v = np.meshgrid(u, v)
+
+        # 计算 x, y, z 坐标
+        x, y, z = self._mobius(u, v, batch_size)
+        # 将数据重塑为 batch_size 行，3列
+        data = np.vstack((x, y, z)).T
+
+        return torch.tensor(data, dtype=torch.float, device=self.device)
+
+    def _mobius(self, u, v, batch_size):
+        x = (1 + 0.5 * v * np.cos(u / 2)) * np.cos(u)
+        y = (1 + 0.5 * v * np.cos(u / 2)) * np.sin(u)
+        z = 0.5 * v * np.sin(u / 2)
+        x, y, z = (
+            x.flatten()[:batch_size],
+            y.flatten()[:batch_size],
+            z.flatten()[:batch_size],
+        )
+        x += self.noise * (np.random.rand(*x.shape) - 0.5)
+        y += self.noise * (np.random.rand(*y.shape) - 0.5)
+        z += self.noise * (np.random.rand(*z.shape) - 0.5)
+        return x, y, z
+
+
+class MoonsSampler(Sampler):
+    def __init__(self, dim=2, noise=0.1, device="cuda"):
+        super(MoonsSampler, self).__init__(device=device)
+        self.noise = noise
+        self.dim = dim
+        self.colors = None
+
+    def sample(self, batch_size=1000):
+        data, colors = datasets.make_moons(n_samples=batch_size, noise=self.noise)
+        data = data / 2.0  # 数据归一化以适应可视化范围
+        self.colors = colors
+        return torch.tensor(data, dtype=torch.float32, device=self.device)
 
 
 # class ZeroImageSampler(Sampler):
