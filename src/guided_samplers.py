@@ -16,7 +16,7 @@ class Sampler:
 class PairedSubsetSampler(Sampler):
     def __init__(self, loader, subsetsize = 8, weight=None, get_labels=False, device='cuda'):
         super(PairedSubsetSampler, self).__init__(device)
-        self.get_lables = get_labels
+        self.get_labels = get_labels
         self.loader = loader
         self.subsetsize = subsetsize
         if weight is None:
@@ -34,10 +34,12 @@ class PairedSubsetSampler(Sampler):
                 batch_Y.append(Y.clone().to(self.device).float())
 
         if self.get_labels:
-            return torch.stack(batch_X).to(self.device), torch.stack(batch_Y).to(self.device), classes
+            return torch.stack(batch_X).to(self.device), torch.stack(batch_Y).to(self.device), torch.tensor(classes).to(self.device)
         else:
             return torch.stack(batch_X).to(self.device), torch.stack(batch_Y).to(self.device)
 
+    def __len__(self):
+        return len(self.loader)
     
 class SubsetGuidedDataset(Dataset):
     def __init__(self, dataset_in, dataset_out, num_labeled='all', in_indicies=None, out_indicies=None):
