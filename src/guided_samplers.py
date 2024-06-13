@@ -14,8 +14,9 @@ class Sampler:
     
 
 class PairedSubsetSampler(Sampler):
-    def __init__(self, loader, subsetsize = 8, weight=None, device='cuda'):
+    def __init__(self, loader, subsetsize = 8, weight=None, get_labels=False, device='cuda'):
         super(PairedSubsetSampler, self).__init__(device)
+        self.get_lables = get_labels
         self.loader = loader
         self.subsetsize = subsetsize
         if weight is None:
@@ -31,9 +32,12 @@ class PairedSubsetSampler(Sampler):
                 X, Y = self.loader.get(class_, self.subsetsize)
                 batch_X.append(X.clone().to(self.device).float())
                 batch_Y.append(Y.clone().to(self.device).float())
-                
-        return torch.stack(batch_X).to(self.device), torch.stack(batch_Y).to(self.device)
-    
+
+        if self.get_labels:
+            return torch.stack(batch_X).to(self.device), torch.stack(batch_Y).to(self.device), classes
+        else:
+            return torch.stack(batch_X).to(self.device), torch.stack(batch_Y).to(self.device)
+
     
 class SubsetGuidedDataset(Dataset):
     def __init__(self, dataset_in, dataset_out, num_labeled='all', in_indicies=None, out_indicies=None):
@@ -46,7 +50,7 @@ class SubsetGuidedDataset(Dataset):
         self.subsets_out = out_indicies
         if num_labeled != 'all':
             assert type(num_labeled) == int
-            self.subsets_out = [np.random.choice(subset, num_labeled) for subset in  self.subsets_out]
+            self.subsets_out = [np.random.choice(subset, num_labeled) for subset in self.subsets_out]
         
     def get(self, class_, subsetsize):
         x_subset = []
@@ -72,7 +76,7 @@ def get_indicies_subset(dataset,  new_labels = {}, classes=4, subset_classes=Non
     i = 0
     for x,y in dataset:
         if y in subset_classes:
-            if type(y)== int:
+            if type(y) == int:
                 class_indicies[new_labels[y]].append(i)
                 labels_subset.append(new_labels[y])
             else:

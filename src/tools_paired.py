@@ -9,12 +9,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from tqdm import tqdm_notebook
+from tqdm import tqdm
 import multiprocessing
 
 from PIL import Image
 from .inception import InceptionV3
-from tqdm import tqdm_notebook as tqdm
 from .fid_score import calculate_frechet_distance
 from .distributions import PairedLoaderSampler, LoaderSampler
 import torchvision.datasets as datasets
@@ -384,14 +383,15 @@ def get_loader_stats(loader, batch_size=8, n_epochs=1, verbose=False, use_Y=Fals
     model = InceptionV3([block_idx]).cuda()
     freeze(model)
     
-    size = len(loader.dataset)
+    size = len(loader.loader)
     pred_arr = []
     
-    for epoch in tqdm_notebook(range(n_epochs)):
+    for epoch in tqdm(range(n_epochs)):
         with torch.no_grad():
-            for step, (X, Y) in enumerate(loader) if not verbose else tqdm(enumerate(loader)):
-                for i in range(0, len(X), batch_size):
-                    start, end = i, min(i + batch_size, len(X))
+            for i in tqdm(range(0, size, batch_size)) if verbose else range(0, size, batch_size):
+                X, Y = loader.sample(batch_size)
+                for ii in range(0, len(X), batch_size):
+                    start, end = ii, min(ii + batch_size, len(X))
                     if not use_Y:
                         batch = ((X[start:end] + 1) / 2).type(torch.FloatTensor).cuda()
                     else:
@@ -562,3 +562,100 @@ def EnergyDistances(T, XY_sampler, size=1048, batch_size=8, device='cuda'):
             
 #     gc.collect(); torch.cuda.empty_cache()
 #     return ECD
+def linked_mapping(SDEs, x, return_trajectory=False):
+    for sde in SDEs:
+        freeze(sde)
+
+    tr = []
+    y = x
+    for sde in SDEs:
+        trajectory, times, shifts = sde(y)
+        y = trajectory[:, -1]
+        if return_trajectory:
+            tr.append(y.clone().detach())
+    if return_trajectory:
+        return tr
+    
+    return y
+
+def get_linked_sdes_pushed_loader_stats(
+    SDEs,
+    loader,
+    batch_size=8,
+    n_epochs=1,
+    verbose=False,
+    device="cuda",
+    use_downloaded_weights=False,
+):
+    dims = 2048
+    block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
+    model = InceptionV3([block_idx], use_downloaded_weights=use_downloaded_weights).to(
+        device
+    )
+    freeze(model)
+
+    size = len(loader.dataset)
+    pred_arr = []
+
+    for epoch in range(n_epochs):
+        with torch.no_grad():
+            for step, (X, _) in (
+                enumerate(loader) if not verbose else tqdm(enumerate(loader))
+            ):
+                for i in range(0, len(X), batch_size):
+                    start, end = i, min(i + batch_size, len(X))
+                    x = X[start:end].type(torch.FloatTensor).to(device)
+                    batch = linked_mapping(SDEs, x).add(1).mul(0.5)
+
+                    assert batch.shape[1] in [1, 3]
+                    if batch.shape[1] == 1:
+                        batch = batch.repeat(1, 3, 1, 1)
+                    pred_arr.append(
+                        model(batch)[0].cpu().data.numpy().reshape(end - start, -1)
+                    )
+
+    pred_arr = np.vstack(pred_arr)
+    mu, sigma = np.mean(pred_arr, axis=0), np.cov(pred_arr, rowvar=False)
+    gc.collect()
+    torch.cuda.empty_cache()
+    return mu, sigma
+
+def test_accuracy(model, testloader):
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for data in testloader:
+            x, y = data
+            outputs = model(x.cuda())
+            _, predicted = torch.max(outputs.data, 1)
+            total += y.size(0)
+            correct += (predicted == y.cuda()).sum().item()
+    accuracy = 100 * correct / total
+    print('Accuracy of the network:', accuracy)
+    return accuracy
+
+def compute_transport_accuracy(SDEs, XY_test_sampler, classifier):
+    XY_test_sampler.get_labels=True
+    transport_results = []
+    real_labels = []
+    flat_transport_results =[]
+    flat_real_labels = []
+    for X, Y, labels in XY_test_sampler:
+        real_labels.append(labels)
+        
+        with torch.no_grad():
+            T_X = linked_mapping(SDEs, X.cuda())
+            transport_results.append(T_X)
+
+    for sublist, ys in zip(transport_results, real_labels):
+        for item, y in zip(sublist, ys):
+            flat_transport_results.append(item.data.cpu().numpy())
+            flat_real_labels.append(y)
+
+    flat_transport_results = torch.Tensor(flat_transport_results)
+    flat_real_labels = torch.LongTensor(flat_real_labels)
+    transport_dataset = torch.utils.data.TensorDataset(flat_transport_results, flat_real_labels)
+    transport_loader = torch.utils.data.DataLoader(transport_dataset, batch_size=100, shuffle=False,
+            num_workers=40, pin_memory=True)
+    accuracy = test_accuracy(classifier, transport_loader)
+    return accuracy

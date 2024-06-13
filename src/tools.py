@@ -555,14 +555,15 @@ def compute_transport_accuracy(SDEs, labeled_X_sampler, classifier):
     accuracy = test_accuracy(classifier, transport_loader)
     return accuracy
 
-def compute_transport_accuracy_and_FID(SDEs, labeled_X_sampler, classifier, m_data, s_data):
+def compute_transport_accuracy_and_FID(SDEs, XY_test_sampler, classifier, m_data, s_data):
+    XY_test_sampler.get_labels = True
     transport_results = []
     real_labels = []
     flat_transport_results =[]
     flat_real_labels = []
 
     print("Mapping X dataset")
-    for X, labels in labeled_X_sampler:
+    for X, Y, labels in XY_test_sampler:
         real_labels.append(labels)
         
         with torch.no_grad():

@@ -25,3 +25,4 @@ saved_models/
 **/wandb/
 **/checkpoints/
 **/.ipynb_checkpoints/
+**/weights/
