@@ -2,7 +2,6 @@
 name = "DiffOT"
 version = "0.1.0"
 description = ""
-authors = [{ name = "Yingzhen Zhang", email = "yingzhenzhang@njust.edu.cn" }]
 dependencies = [
     "scipy>=1.13.0",
     "numpy>=1.26.3",
